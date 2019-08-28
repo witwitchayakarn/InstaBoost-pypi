@@ -1,11 +1,11 @@
 import numpy as np
 from copy import deepcopy
-from .get_instance_group import extract
-from .affine_transform import transform_image, transform_annotation
+from .get_instance_group import extract, extract_with_mask
+from .affine_transform import transform_image, transform_annotation, transform_mask
 from .config import InstaBoostConfig
 from .exceptions import *
 import cv2
-from .pointByHeatmap import paste_position
+from .pointByHeatmap import paste_position, paste_position_with_mask
 from PIL import Image, ImageEnhance, ImageOps, ImageFile
 
 
@@ -59,6 +59,48 @@ def get_new_data(ori_anns: list, ori_img: np.ndarray, config: InstaBoostConfig=N
         new_img = cv2.cvtColor(np.asarray(PIL_img),cv2.COLOR_RGB2BGR)
 
     return new_ann, new_img
+
+def get_new_image_and_mask(ori_mask: np.ndarray,
+                           ori_img: np.ndarray,
+                           config: InstaBoostConfig=None):
+
+    if len(ori_img.shape) == 2 or ori_img.shape[2] == 1:  # gray scale
+        ori_img = cv2.merge([ori_img] * 3)
+
+    if config is None:
+        config = InstaBoostConfig()
+
+    background, instances_list, transforms_list, groupbnds_list, groupidx_list = \
+            extract_with_mask(ori_mask, ori_img, config)
+
+    assert background.shape == ori_img.shape, 'Background and original image shape mismatch'
+
+    if config.heatmap_flag:
+        heatmap_guided_pos_list = paste_position_with_mask(ori_mask,
+                                                           ori_img,
+                                                           groupidx_list,
+                                                           groupbnds_list)
+        for i in range(len(heatmap_guided_pos_list)):
+            heatmap_guided_pos = heatmap_guided_pos_list[i]
+            if heatmap_guided_pos[0] != -1:
+                transforms_list[i]['tx'] = heatmap_guided_pos[1]
+                transforms_list[i]['ty'] = heatmap_guided_pos[0]
+
+    new_img = transform_image(background, instances_list, transforms_list)
+    new_mask = transform_mask(ori_mask,
+                              transforms_list,
+                              groupbnds_list,
+                              groupidx_list,
+                              background.shape[1],
+                              background.shape[0])
+
+    color_flag = np.random.choice([0,1],p=[1-config.color_prob, config.color_prob])
+    if color_flag:
+        PIL_img = Image.fromarray(cv2.cvtColor(new_img,cv2.COLOR_BGR2RGB))
+        PIL_img = randomColor(PIL_img)
+        new_img = cv2.cvtColor(np.asarray(PIL_img),cv2.COLOR_RGB2BGR)
+
+    return new_mask, new_img
 
 def randomColor(image):
         """

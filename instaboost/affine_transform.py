@@ -134,3 +134,37 @@ def transform_annotation(anns: list, trans_params: list, group_bnds: list, group
             ret_anns.append(ann)
 
     return ret_anns
+
+
+def transform_mask(mask: np.ndarray,
+                   trans_params: list,
+                   group_bnds: list,
+                   group_indices: list,
+                   width: int,
+                   height: int):
+
+    ret_mask = np.zeros_like(mask)
+    for indices, trans_param, group_bnd in zip(group_indices, trans_params, group_bnds):
+        for idx in indices:
+            xmin, ymin, xmax, ymax = group_bnd
+            segm = (mask == idx+1)
+            inst_mask = segm[ymin:ymax, xmin:xmax]
+
+            if 'flip' in trans_param:
+                if trans_param['flip'] == 'horizontal':
+                    inst_mask = inst_mask[:, ::-1]
+                elif trans_param['flip'] == 'vertical':
+                    inst_mask = inst_mask[::-1, :]
+                else:
+                    raise ValueError('Unknown flip parameter {}'.format(trans_param['flip']))
+            # nearest interpolation
+            new_inst_mask = __transform_img(inst_mask,
+                                            trans_param,
+                                            (height, width),
+                                            order=0)
+            if np.sum(new_inst_mask) == 0:  # transformed mask out of image
+                continue
+
+            ret_mask[new_inst_mask == 1] = idx+1
+
+    return ret_mask

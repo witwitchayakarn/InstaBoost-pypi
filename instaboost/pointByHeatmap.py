@@ -70,6 +70,37 @@ def _get_mask_center_background(ann_list: list, img: np.ndarray, grouplist: list
     return background, mask_list, center_list
 
 
+def _get_mask_center_background_with_mask(mask: np.ndarray,
+                                          img: np.ndarray,
+                                          grouplist: list,
+                                          bndlist: list):
+
+    single_mask_list = []
+    center_list = []
+    mask_list = []
+
+    for i in range(np.max(mask)):
+        single_mask = np.zeros_like(mask)
+        single_mask[mask == i+1] = 1
+        single_mask_list.append(single_mask)
+
+    for group in grouplist:
+        group_mask = np.zeros((img.shape[0], img.shape[1]), dtype=np.int32)
+        for idx in group:
+            group_mask[single_mask_list[idx] > 0] = 255
+        mask_list.append(group_mask)
+
+    for bbox in bndlist:
+        group_center = [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2]
+        center_list.append(group_center)
+
+    kernel = np.ones((5, 5), np.uint8)
+    img_mask = cv2.dilate(mask.astype(np.float64), kernel, iterations=2)
+    background = cv2.inpaint(img, np.uint8(img_mask), 5, cv2.INPAINT_NS)
+
+    return background, mask_list, center_list
+
+
 def _get_trimap(single_mask: np.ndarray, kernel_size: int=5):
     '''
     input: single_mask(np.ndarray): a mask of an instance
@@ -143,6 +174,22 @@ def paste_position(anns, img, grouplist, bndlist):
         heatmap_guided_pos_list.append(pos)
 
     return heatmap_guided_pos_list
+
+def paste_position_with_mask(mask, img, grouplist, bndlist):
+
+    background, mask_list, center_list = _get_mask_center_background_with_mask(mask,
+                                                                               img,
+                                                                               grouplist,
+                                                                               bndlist)
+
+    heatmap_guided_pos_list = []
+    for i in range(len(mask_list)):
+        trimap = _get_trimap(mask_list[i])
+        pos = _get_paste_pos(img, background, trimap, center_list[i], 10)
+        heatmap_guided_pos_list.append(pos)
+
+    return heatmap_guided_pos_list
+
 
 if __name__ == '__main__':
     import time

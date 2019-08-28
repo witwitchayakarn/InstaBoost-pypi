@@ -187,3 +187,67 @@ def extract(anns: list, img: np.ndarray, config: InstaBoostConfig):
         groupbnd_list.append([xmin, ymin, xmax, ymax])
 
     return background, instances_list, transforms_list, groupbnd_list, group
+
+
+def extract_with_mask(mask: np.ndarray, img: np.ndarray, config: InstaBoostConfig):
+
+    width = img.shape[1]
+    height = img.shape[0]
+
+    background = cv2.inpaint(img, np.uint8(mask), 5, cv2.INPAINT_NS)
+
+    numinst = np.max(mask)
+    bboxs = []
+    for i in range(np.max(mask)):
+        xys = np.array(np.where(mask==i+1))
+
+        row1, col1 = np.amin(xys, axis=1)
+        row2, col2 = np.amax(xys, axis=1)
+
+        bboxs.append((col1, row1, col2-col1, row2-row1))
+
+    inst_group_belonging = [0] * numinst
+    group = []
+    group_idx = 1
+    for i in range(numinst):
+        if inst_group_belonging[i] == 0:
+            group.append([i])
+            inst_group_belonging[i] = group_idx
+            dfs(bboxs, inst_group_belonging, group[len(group) - 1], group_idx, i)
+            group_idx += 1
+
+    realbboxs = []
+    instances_list = []
+    transforms_list = []
+    groupbnd_list = []
+    for i in range(len(group)):
+        x, y, w, h = bboxs[group[i][0]]
+        realbboxs.append([x, y, x + w, y + h])
+        for j in range(len(group[i])):
+            x, y, w, h = bboxs[group[i][j]]
+            realbboxs[i][0] = min(realbboxs[i][0], x)
+            realbboxs[i][1] = min(realbboxs[i][1], y)
+            realbboxs[i][2] = max(realbboxs[i][2], x + w)
+            realbboxs[i][3] = max(realbboxs[i][3], y + h)
+            xmin, ymin, xmax, ymax = realbboxs[i]
+
+        maskgroupi = get_masks(mask, group[i])
+        trimapi = gettrimap(maskgroupi, 5)
+
+        alphamapi = global_matting(img, trimapi)
+        alphamapi = guided_filter(img, trimapi, alphamapi, 10, 1e-5)
+
+        ymin, ymax, xmin, xmax = [int(round(x)) for x in (ymin, ymax, xmin, xmax)]
+        resulti = np.dstack((img[ymin:ymax, xmin:xmax], alphamapi[ymin:ymax, xmin:xmax]))
+
+        restricts = get_restriction([xmin, ymin, xmax, ymax], width, height)
+        resulti, transformi = get_transform(resulti, restricts, config) # resulti may be flipped
+
+        transformi['tx'] += (xmin + xmax) / 2
+        transformi['ty'] += (ymin + ymax) / 2
+
+        instances_list.append(resulti)
+        transforms_list.append(transformi)
+        groupbnd_list.append([xmin, ymin, xmax, ymax])
+
+    return background, instances_list, transforms_list, groupbnd_list, group
